@@ -1,0 +1,152 @@
+---
+title: "P8105: Data Science I"
+author: "Assignment 6<br>Jimmy Kelliher (UNI: jmk2303)"
+output:
+  github_document:
+    toc: TRUE
+---
+
+<!------------------------------------------------------------------------------
+Preamble
+------------------------------------------------------------------------------->
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# load necessary packages
+library(tidyverse)
+
+# set knitr defaults
+knitr::opts_chunk$set(
+    echo      = TRUE
+  , message   = FALSE
+  , fig.width = 6
+  , fig.asp   = .6
+  , out.width = "90%"
+)
+
+# set theme defaults
+theme_set(
+  theme_bw() +
+  theme(
+    legend.position = "bottom"
+    , plot.title    = element_text(hjust = 0.5)
+    , plot.subtitle = element_text(hjust = 0.5)    
+    , plot.caption  = element_text(hjust = 0.0)
+  )
+)
+
+# set color scale defaults
+options(
+    ggplot2.continuous.colour = "viridis"
+  , ggplot2.continuous.fill   = "viridis"
+)
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete   = scale_fill_viridis_d
+```
+
+<!------------------------------------------------------------------------------
+Problem 1
+------------------------------------------------------------------------------->
+
+# Problem 1
+
+```{r}
+birthweight <-
+  read_csv("./datasets/birthweight.csv") %>%
+  mutate(
+    babysex = factor(recode(
+      babysex
+    , `1` = "Male"
+    , `2` = "Female"
+    ))
+    # recode mrace as a factor variable
+  , mrace = factor(recode(
+      mrace
+    , `1` = "White"
+    , `2` = "Black"
+    , `3` = "Asian"
+    , `4` = "Puerto Rican"
+    , `8` = "Other"
+    ))
+    # recode frace as a factor variable, noting it has an additional level
+  , frace = factor(recode(
+      frace
+    , `1` = "White"
+    , `2` = "Black"
+    , `3` = "Asian"
+    , `4` = "Puerto Rican"
+    , `8` = "Other"
+    , `9` = "Unknown"
+    ))
+    # recode malform as a factor variable
+  , malform = factor(recode(
+      malform
+    , `0` = "Absent"
+    , `1` = "Present"
+    ))
+    # about 92% of observations are either black couples or white couples
+    # as such, we create a more parsimonious factor variable to capture this
+  , prace = factor(
+      ifelse((mrace == "Black" & frace == "Black"), "Black",
+      ifelse((mrace == "White" & frace == "White"), "White", "Other"))
+    )
+  )
+```
+
+We first observe that the variables `pnumlbw` and `pnumsga` consist solely of zeroes. As they offer no variation, they are not suitable for prediction in this dataset, so we will omit them from our analysis.
+
+```{r}
+# show that pnumlbw is always zero
+all(pull(birthweight, pnumlbw) == 0)
+
+# show that pnumsga is always zero
+all(pull(birthweight, pnumsga) == 0)
+```
+
+```{r}
+summary(lm(
+  bwt ~ 
+    #delwt    omitted since wtgain = delwt - ppwt
+  + fincome
+  + wtgain
+  #+ mrace
+  #+ frace
+  #+ mrace * frace
+  + prace
+  + gaweeks
+  #+ malform
+  + menarche
+  + mheight
+  + momage
+  + parity
+  #+ pnumlbw    all enttries 0
+  #+ pnumsga    all enttries 0
+  + ppbmi
+  + ppwt
+  + smoken
+  # baby variables
+  #+ babysex
+  #+ bhead
+  + blength
+  , data = birthweight
+))
+```
+
+
+
+```{r}
+y <- pull(birthweight, bwt)
+X <-
+  birthweight %>%
+  select(
+    fincome, wtgain, mrace, frace, gaweeks, malform, menarche,
+    mheight, momage, parity, ppbmi, ppwt, smoken, delwt,
+    # baby variables
+    babysex, bhead, blength
+  )
+
+#cv_model <- glmnet::cv.glmnet(as.matrix(X), y, alpha = 1)
+
+# find optimal lambda value that minimizes test MSE
+#best_lambda <- cv_model$lambda.min
+#best_lambda
+```
