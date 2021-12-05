@@ -152,7 +152,7 @@ As such, including `wtgain`, `delwt`, and `ppwt` simultaneously as predictors wo
 
 The `fincome` variable is a bit tricky. Should we consider the logarithm of `fincome`? Values denote monthly income in hundreds, rounded. Moreover, values seem to be top-coded at 96, such that any family with a household salary exceeding \$114,600 is grouped into the same category. Because of this arbitrary cap, `fincome` does not seem log-normal, as shown below. (Note: As $\log(0) = -\infty$, we omit the single observation for which `fincome` = 0.)
 
-```{r}
+```{r distribution_fincome}
 # ploot histogram of log(income)
 birthweight %>%
   # omit single row for which fincome = 0
@@ -175,7 +175,7 @@ Should `fincome` be a factor variable? There are 12 levels of `fincome`, so even
 
 While we have eliminated variables that are obviously bad choices for predictors of birth weight, we will turn to machine learning to eliminate those that are less obviously bad. In particular, we invoke the `glmnet` function to conduct a lasso regression. Below, we use `model.matrix` to convert factor variables to dummy variables, which we can then feed to `glmnet` to obtain the near-optimal choice of $\lambda$, the shrinkage penalty.
 
-```{r}
+```{r optimal_shrinkage_penalty}
 # identify output vector y
 y <- pull(birthweight, bwt)
 
@@ -248,7 +248,7 @@ final_model %>%
 
 All of our variables appear as highly significant ($p$ < 0.01), and our adjusted $R^2 \approx$ 71.4%. Given our parsimonious selection of variables, this seems like a good fit! Let's compare our model residuals to our model predictions to validate the results.
 
-```{r}
+```{r residuals_vs_predictions}
 # plot scatter plot of residuals against fitted values
 birthweight %>%
   # add predicted values
@@ -271,13 +271,13 @@ birthweight %>%
   )
 ```
 
-There are two observations for which a negative birth weight is predicted, but this is not unreasonable for an unconstrained linear regression. Though the residuals tend to skew positive for fitted values below 1,750, only about `r round(100 * sum((birthweight %>% add_predictions(final_model) %>% pull(pred)) < 1750) / nrow(birthweight), 2)`% of observations lie below this threshold. Otherwise, residuals seem to generally be dispersed evenly about the line $y = 0$. That is, outside the aforementioned outliers, the errors seems to be mean-zero and homoscedastic.
+There are two observations for which a negative birth weight is predicted, but this is not unreasonable for an unconstrained linear regression. Though the residuals tend to skew positive for fitted values below 1,750, only about `r round(100 * sum((birthweight %>% add_predictions(final_model) %>% pull(pred)) < 1750) / nrow(birthweight), 2)`% of observations lie below this threshold. Otherwise, residuals seem to generally be dispersed evenly about the line $y = 0$. That is, outside the aforementioned outliers, the errors seem to be mean-zero and homoscedastic.
 
 ## Model Comparison
 
 Finally, we compare our model to two other linear model candidates. The first model considers length at birth and gestational age in weeks as inputs. The second model considers head circumference at birth, length at birth, and sex of the child - as well as all possible interactions - as inputs.
 
-```{r}
+```{r model_comparison}
 # create alt model with inputs blength and gaweeks
 model_alt1 <- lm(bwt ~ blength + gaweeks, data = birthweight)
 
@@ -348,67 +348,127 @@ rmse_df %>%
 
 Our lasso-inspired model seems to generally perform the best, though the model with interaction terms also seems to do well. Conversely, the distribution of prediction errors for the model with only two inputs lies entirely above that of our model, so we can confidently say that our model is strictly better than this alternative. Moreover, in addition to performing better on average, our model is much easier to interpret than the model with interactions, as the effect of each input in the latter model depends on the other two inputs. Thanks, lasso!
 
+
+
 # Problem 2
 
+We now move to weather data from Central Park. We seek to use a bootstrapping procedure to estimate parameters pertaining to the linear relationship between maximum daily temperature and minimum daily temperature.
+
 ```{r}
+# pull weather data from rnoaa
 weather_df <-
   rnoaa::meteo_pull_monitors(
-    c("USW00094728"),
-    var = c("PRCP", "TMIN", "TMAX"), 
-    date_min = "2017-01-01",
-    date_max = "2017-12-31") %>%
+      c("USW00094728")
+    , var      = c("PRCP", "TMIN", "TMAX")
+    , date_min = "2017-01-01"
+    , date_max = "2017-12-31"
+  ) %>%
   mutate(
-    name = recode(id, USW00094728 = "CentralPark_NY"),
-    tmin = tmin / 10,
-    tmax = tmax / 10) %>%
+      name = recode(id, USW00094728 = "CentralPark_NY")
+    , tmin = tmin / 10
+    , tmax = tmax / 10
+  ) %>%
   select(name, id, everything())
 ```
 
+## The Bootstrap
+
+With our weather data in tow, we are ready to execute the bootstrap! We consider the simple regression
+
+&nbsp; &nbsp; &nbsp; &nbsp; $\text{temp}_t^{\text{max}} = \beta_0 + \beta_1 \text{temp}_t^{\text{min}} + \varepsilon_t$
+
+for each day $t$ in 2017. We create 5,000 resampled replicates of our weather data and run the above regression for each one.
 
 ```{r}
+# set a seed for replicability
 set.seed(8105)
+
+# perform the bootstrap with 5000 replicates
 bootstrap_output <-
   weather_df %>%
+  # execute bootstrap
   modelr::bootstrap(n = 5000) %>% 
+  # for all replicate samples, store regression output via list column
   mutate(
       models         = map(strap, ~lm(tmax ~ tmin, data = .x) )
     , results_tidy   = map(models, broom::tidy)
     , results_glance = map(models, broom::glance)
   ) %>% 
+  # remove extraneous columns
   select(-strap, -models)
+```
 
+## Estimating the Coefficient of Determination
+
+First, let's try to estimate the distribution of the estimator for the coefficient of determination, $R^2$.
+
+```{r distribution_r2}
+# unnest result for r2
 r2_estimate <-
   bootstrap_output %>%
+  # select just the broom::glance output to get r2
   select(-results_tidy) %>%
+  # unnest result
   unnest(results_glance) %>%
-  select(.id, r.squared, adj.r.squared)
+  # keep relevant columns
+  select(.id, r.squared)
 
+# create a density plot of the distribution of our estimates
+r2_estimate %>%
+  # instantiate plot
+  ggplot(aes(x = r.squared)) +
+  # add density
+  geom_density() +
+  # add meta-data
+  labs(
+    title = "Distribution of Estimates of Coefficient of Determination"
+    , x = ""
+    , y = "Density"
+  )
+```
+
+The 95% confidence interval around our estimate of $R^2$ is given by [`r round(quantile(pull(r2_estimate, r.squared), 0.05 / 2), 4)`, `r round(quantile(pull(r2_estimate, r.squared), 1 - 0.05 / 2), 4)`]. The distribution has a very slight left skew, but it largely seems to follow a normal distribution with mean `r round(mean(pull(r2_estimate, r.squared)), 4)` and standard deviation of `r round(sd(pull(r2_estimate, r.squared)), 4)`.
+
+## Estimating a Non-linear Function of the Regression Coefficients
+
+Next, let's try to estimate the distribution of the estimator for $S \equiv \log(\beta_0 \times \beta_1)$.
+
+```{r distribution_logb0b1}
+# unnest result for coefficients and compute log(b0*b1)
 log_prod_estimate <-
   bootstrap_output %>%
+  # select just the broom::tidy output to get b0 and b1
   select(-results_glance) %>%
+  # unnest result
   unnest(results_tidy) %>%
+  # keep relevant columns
   select(.id, term, estimate) %>%
+  # prepare results for pivot
   mutate(term = recode(
       term
     , "(Intercept)" = "b0"
     , "tmin"        = "b1"
   )) %>%
+  # pivot wider to enable row-wise computation
   pivot_wider(
-    names_from = term
+      names_from  = term
     , values_from = estimate
   ) %>%
+  # compute estimate as function of b0 and b1
   mutate(log_prod = log(b0 * b1))
-```
 
-```{r}
-r2_estimate %>%
-  ggplot(aes(x = r.squared)) +
-  geom_density()
-```
-
-```{r}
+# create a density plot of the distribution of our estimates
 log_prod_estimate %>%
+  # instantiate plot
   ggplot(aes(x = log_prod)) +
-  geom_density()
+  # add density
+  geom_density() +
+  # add meta-data
+  labs(
+    title = "Distribution of Estimates of S"
+    , x = ""
+    , y = "Density"
+  )
 ```
 
+The 95% confidence interval around our estimate of $\log(\beta_0 \times \beta_1)$ is given by [`r round(quantile(pull(log_prod_estimate, log_prod), 0.05 / 2), 4)`, `r round(quantile(pull(log_prod_estimate, log_prod), 1 - 0.05 / 2), 4)`]. Once again, the distribution has a very slight left skew, but it largely seems to follow a normal distribution with mean `r round(mean(pull(log_prod_estimate, log_prod)), 4)` and standard deviation of `r round(sd(pull(log_prod_estimate, log_prod)), 4)`.
